@@ -21,11 +21,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.Date;
-import java.util.UUID;
-import java.util.Map;
-import java.util.HashMap;
-import java.util.List;
+import java.util.*;
 
 
 public class CQLMapper extends Mapper<AegisthusKey, AtomWritable, AvroKey<GenericRecord>, NullWritable> {
@@ -125,64 +121,66 @@ public class CQLMapper extends Mapper<AegisthusKey, AtomWritable, AvroKey<Generi
 
         // write out partition keys
         for (CFDefinition.Name name : cfDef.partitionKeys()) {
-            addCqlValueToRecord(record, name, keyComponents[name.position]);
+            addValue(record, name, keyComponents[name.position]);
         }
 
         // write out clustering columns
         for (CFDefinition.Name name : cfDef.clusteringColumns()) {
-            addCqlValueToRecord(record, name, group.getKeyComponent(name.position));
+            addValue(record, name, group.getKeyComponent(name.position));
         }
 
         // regular columns
         for (CFDefinition.Name name : cfDef.regularColumns()) {
-            addValue(record, name, group);
+            addGroup(record, name, group);
         }
 
         // static columns
         for (CFDefinition.Name name : cfDef.staticColumns()) {
-            addValue(record, name, staticGroup);
+            addGroup(record, name, staticGroup);
         }
 
         context.write(new AvroKey(record), NullWritable.get());
     }
 
-    /* adapted from org.apache.cassandra.cql3.statements.SelectStatement.addValue */
-    private void addValue(GenericRecord record, CFDefinition.Name name, ColumnGroupMap group) {
+    private void addValue(GenericRecord record, CFDefinition.Name name, ByteBuffer value) {
+        record.put(name.name.toString(), getDeserializedValue(name.type, value));
+    }
+
+    private void addGroup(GenericRecord record, CFDefinition.Name name, ColumnGroupMap group) {
         if (name.type.isCollection()) {
             CollectionType<?> collectionType = (CollectionType<?>) name.type;
 
-            if (collectionType.kind == CollectionType.Kind.MAP) {
-                List<Pair<ByteBuffer, Column>> pairs = group.getCollection(name.name.key);
-                if (pairs == null) {
-                    record.put(name.name.toString(), new HashMap());
-                    return;
-                }
-
-                Map<String, Object> map = new HashMap();
-
-                for (Pair<ByteBuffer, Column> pair : pairs) {
-                    if (pair == null)
-                        continue;
-
-                    String mapKey = collectionType.nameComparator().getString(pair.left);
-                    Object mapValue = getDeserializedValue(collectionType.valueComparator(), pair.right.value());
-
-                    if (mapValue == null)
-                        continue;
-
-                    map.put(mapKey, mapValue);
-                }
-
-                record.put(name.name.toString(), map);
-            }
+            if (collectionType.kind == CollectionType.Kind.MAP)
+                addMapValue(record, name, group, collectionType);
         } else {
             Column c = group.getSimple(name.name.key);
-            addCqlValueToRecord(record, name, (c == null) ? null : c.value());
+            addValue(record, name, (c == null) ? null : c.value());
         }
     }
 
-    private void addCqlValueToRecord(GenericRecord record, CFDefinition.Name name, ByteBuffer value) {
-        record.put(name.name.toString(), getDeserializedValue(name.type, value));
+    private void addMapValue(GenericRecord record, CFDefinition.Name name, ColumnGroupMap group, CollectionType<?> collectionType) {
+        List<Pair<ByteBuffer, Column>> pairs = group.getCollection(name.name.key);
+        if (pairs == null) {
+            record.put(name.name.toString(), new HashMap());
+            return;
+        }
+
+        Map<String, Object> map = new HashMap();
+
+        for (Pair<ByteBuffer, Column> pair : pairs) {
+            if (pair == null)
+                continue;
+
+            String mapKey = collectionType.nameComparator().getString(pair.left);
+            Object mapValue = getDeserializedValue(collectionType.valueComparator(), pair.right.value());
+
+            if (mapValue == null)
+                continue;
+
+            map.put(mapKey, mapValue);
+        }
+
+        record.put(name.name.toString(), map);
     }
 
     private Object getDeserializedValue(AbstractType<?> type, ByteBuffer value) {
