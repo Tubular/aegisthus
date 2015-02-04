@@ -14,7 +14,9 @@ import org.apache.cassandra.cql3.statements.ColumnGroupMap;
 import org.apache.cassandra.db.Column;
 import org.apache.cassandra.db.OnDiskAtom;
 import org.apache.cassandra.db.marshal.*;
+import org.apache.cassandra.serializers.UTF8Serializer;
 import org.apache.cassandra.utils.ByteBufferUtil;
+import org.apache.cassandra.utils.Pair;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.NullWritable;
 import org.apache.hadoop.io.WritableComparable;
@@ -26,6 +28,10 @@ import java.nio.ByteBuffer;
 import java.sql.Timestamp;
 import java.util.Date;
 import java.util.UUID;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.List;
+
 
 public class CQLMapper extends Mapper<AegisthusKey, AtomWritable, AvroKey<GenericRecord>, NullWritable> {
     private static final Logger LOG = LoggerFactory.getLogger(CQLMapper.class);
@@ -148,8 +154,32 @@ public class CQLMapper extends Mapper<AegisthusKey, AtomWritable, AvroKey<Generi
     /* adapted from org.apache.cassandra.cql3.statements.SelectStatement.addValue */
     private void addValue(GenericRecord record, CFDefinition.Name name, ColumnGroupMap group) {
         if (name.type.isCollection()) {
-            // TODO(danchia): support collections
-            throw new RuntimeException("Collections not supported yet.");
+            CollectionType<?> collectionType = (CollectionType<?>) name.type;
+
+            if (collectionType.kind == CollectionType.Kind.MAP) {
+                List<Pair<ByteBuffer, Column>> pairs = group.getCollection(name.name.key);
+                if (pairs == null) {
+                    record.put(name.name.toString(), new HashMap());
+                    return;
+                }
+
+                Map<String, Object> map = new HashMap();
+
+                for (Pair<ByteBuffer, Column> pair : pairs) {
+                    if (pair == null)
+                        continue;
+
+                    String mapKey = collectionType.nameComparator().getString(pair.left);
+                    Object mapValue = getDeserializedValue(collectionType.valueComparator(), pair.right.value());
+
+                    if (mapValue == null)
+                        continue;
+
+                    map.put(mapKey, mapValue);
+                }
+
+                record.put(name.name.toString(), map);
+            }
         } else {
             Column c = group.getSimple(name.name.key);
             addCqlValueToRecord(record, name, (c == null) ? null : c.value());
@@ -157,12 +187,14 @@ public class CQLMapper extends Mapper<AegisthusKey, AtomWritable, AvroKey<Generi
     }
 
     private void addCqlValueToRecord(GenericRecord record, CFDefinition.Name name, ByteBuffer value) {
+        record.put(name.name.toString(), getDeserializedValue(name.type, value));
+    }
+
+    private Object getDeserializedValue(AbstractType<?> type, ByteBuffer value) {
         if (value == null) {
-            record.put(name.name.toString(), null);
-            return;
+            return null;
         }
 
-        AbstractType<?> type = name.type;
         Object valueDeserialized = type.compose(value);
 
         AbstractType<?> baseType = (type instanceof ReversedType<?>)
@@ -183,8 +215,6 @@ public class CQLMapper extends Mapper<AegisthusKey, AtomWritable, AvroKey<Generi
             valueDeserialized = date.getTime();
         }
 
-        //LOG.info("Setting {} type {} to class {}", name.name.toString(), type, valueDeserialized.getClass());
-
-        record.put(name.name.toString(), valueDeserialized);
+        return valueDeserialized;
     }
 }
