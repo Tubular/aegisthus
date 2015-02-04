@@ -67,7 +67,7 @@ public class CQLMapper extends Mapper<AegisthusKey, AtomWritable, AvroKey<Generi
             cgmBuilder.add((Column) atom);
         } else {
             LOG.error("Non-colum atom. {} {}", atom.getClass(), atom);
-            throw new IllegalArgumentException("Got a non-column Atom.");
+            //throw new IllegalArgumentException("Got a non-column Atom.");
         }
     }
 
@@ -152,6 +152,9 @@ public class CQLMapper extends Mapper<AegisthusKey, AtomWritable, AvroKey<Generi
 
             if (collectionType.kind == CollectionType.Kind.MAP)
                 addMapValue(record, name, group, collectionType);
+            else if (collectionType.kind == CollectionType.Kind.LIST || collectionType.kind == CollectionType.Kind.SET)
+                addListValue(record, name, group, collectionType);
+
         } else {
             Column c = group.getSimple(name.name.key);
             addValue(record, name, (c == null) ? null : c.value());
@@ -165,7 +168,7 @@ public class CQLMapper extends Mapper<AegisthusKey, AtomWritable, AvroKey<Generi
             return;
         }
 
-        Map<String, Object> map = new HashMap();
+        Map<String, Object> map = new HashMap<String, Object>();
 
         for (Pair<ByteBuffer, Column> pair : pairs) {
             if (pair == null)
@@ -181,6 +184,35 @@ public class CQLMapper extends Mapper<AegisthusKey, AtomWritable, AvroKey<Generi
         }
 
         record.put(name.name.toString(), map);
+    }
+
+    private void addListValue(GenericRecord record, CFDefinition.Name name, ColumnGroupMap group, CollectionType<?> collectionType) {
+        List<Pair<ByteBuffer, Column>> pairs = group.getCollection(name.name.key);
+        if (pairs == null) {
+            record.put(name.name.toString(), new LinkedList());
+            return;
+        }
+
+        List<Object> list = new LinkedList<Object>();
+
+        for (Pair<ByteBuffer, Column> pair : pairs) {
+            if (pair == null)
+                continue;
+
+            Object listValue;
+
+            if (collectionType.kind == CollectionType.Kind.LIST)
+                listValue = getDeserializedValue(collectionType.valueComparator(), pair.right.value());
+            else
+                listValue = getDeserializedValue(collectionType.nameComparator(), pair.left);
+
+            if (listValue == null)
+                continue;
+
+            list.add(listValue);
+        }
+
+        record.put(name.name.toString(), list);
     }
 
     private Object getDeserializedValue(AbstractType<?> type, ByteBuffer value) {
