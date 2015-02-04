@@ -14,18 +14,15 @@ import org.apache.cassandra.cql3.statements.ColumnGroupMap;
 import org.apache.cassandra.db.Column;
 import org.apache.cassandra.db.OnDiskAtom;
 import org.apache.cassandra.db.marshal.*;
-import org.apache.cassandra.utils.ByteBufferUtil;
-import org.apache.hadoop.io.IntWritable;
+import org.apache.cassandra.utils.Pair;
 import org.apache.hadoop.io.NullWritable;
-import org.apache.hadoop.io.WritableComparable;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.sql.Timestamp;
-import java.util.Date;
-import java.util.UUID;
+import java.util.*;
+
 
 public class CQLMapper extends Mapper<AegisthusKey, AtomWritable, AvroKey<GenericRecord>, NullWritable> {
     private static final Logger LOG = LoggerFactory.getLogger(CQLMapper.class);
@@ -70,7 +67,7 @@ public class CQLMapper extends Mapper<AegisthusKey, AtomWritable, AvroKey<Generi
             cgmBuilder.add((Column) atom);
         } else {
             LOG.error("Non-colum atom. {} {}", atom.getClass(), atom);
-            throw new IllegalArgumentException("Got a non-column Atom.");
+            //throw new IllegalArgumentException("Got a non-column Atom.");
         }
     }
 
@@ -124,45 +121,105 @@ public class CQLMapper extends Mapper<AegisthusKey, AtomWritable, AvroKey<Generi
 
         // write out partition keys
         for (CFDefinition.Name name : cfDef.partitionKeys()) {
-            addCqlValueToRecord(record, name, keyComponents[name.position]);
+            addValue(record, name, keyComponents[name.position]);
         }
 
         // write out clustering columns
         for (CFDefinition.Name name : cfDef.clusteringColumns()) {
-            addCqlValueToRecord(record, name, group.getKeyComponent(name.position));
+            addValue(record, name, group.getKeyComponent(name.position));
         }
 
         // regular columns
         for (CFDefinition.Name name : cfDef.regularColumns()) {
-            addValue(record, name, group);
+            addGroup(record, name, group);
         }
 
         // static columns
         for (CFDefinition.Name name : cfDef.staticColumns()) {
-            addValue(record, name, staticGroup);
+            addGroup(record, name, staticGroup);
         }
 
         context.write(new AvroKey(record), NullWritable.get());
     }
 
-    /* adapted from org.apache.cassandra.cql3.statements.SelectStatement.addValue */
-    private void addValue(GenericRecord record, CFDefinition.Name name, ColumnGroupMap group) {
+    private void addValue(GenericRecord record, CFDefinition.Name name, ByteBuffer value) {
+        record.put(name.name.toString(), getDeserializedValue(name.type, value));
+    }
+
+    private void addGroup(GenericRecord record, CFDefinition.Name name, ColumnGroupMap group) {
         if (name.type.isCollection()) {
-            // TODO(danchia): support collections
-            throw new RuntimeException("Collections not supported yet.");
+            CollectionType<?> collectionType = (CollectionType<?>) name.type;
+
+            if (collectionType.kind == CollectionType.Kind.MAP)
+                addMapValue(record, name, group, collectionType);
+            else if (collectionType.kind == CollectionType.Kind.LIST || collectionType.kind == CollectionType.Kind.SET)
+                addListValue(record, name, group, collectionType);
+
         } else {
             Column c = group.getSimple(name.name.key);
-            addCqlValueToRecord(record, name, (c == null) ? null : c.value());
+            addValue(record, name, (c == null) ? null : c.value());
         }
     }
 
-    private void addCqlValueToRecord(GenericRecord record, CFDefinition.Name name, ByteBuffer value) {
-        if (value == null) {
-            record.put(name.name.toString(), null);
+    private void addMapValue(GenericRecord record, CFDefinition.Name name, ColumnGroupMap group, CollectionType<?> collectionType) {
+        List<Pair<ByteBuffer, Column>> pairs = group.getCollection(name.name.key);
+        if (pairs == null) {
+            record.put(name.name.toString(), new HashMap());
             return;
         }
 
-        AbstractType<?> type = name.type;
+        Map<String, Object> map = new HashMap<String, Object>();
+
+        for (Pair<ByteBuffer, Column> pair : pairs) {
+            if (pair == null)
+                continue;
+
+            String mapKey = collectionType.nameComparator().getString(pair.left);
+            Object mapValue = getDeserializedValue(collectionType.valueComparator(), pair.right.value());
+
+            if (mapValue == null)
+                continue;
+
+            map.put(mapKey, mapValue);
+        }
+
+        record.put(name.name.toString(), map);
+    }
+
+    private void addListValue(GenericRecord record, CFDefinition.Name name, ColumnGroupMap group, CollectionType<?> collectionType) {
+        List<Pair<ByteBuffer, Column>> pairs = group.getCollection(name.name.key);
+        if (pairs == null) {
+            record.put(name.name.toString(), new LinkedList());
+            return;
+        }
+
+        List<Object> list = new LinkedList<Object>();
+
+        for (Pair<ByteBuffer, Column> pair : pairs) {
+            if (pair == null)
+                continue;
+
+            Object listValue;
+
+            if (collectionType.kind == CollectionType.Kind.LIST)
+                listValue = getDeserializedValue(collectionType.valueComparator(), pair.right.value());
+            else
+                listValue = getDeserializedValue(collectionType.nameComparator(), pair.left);
+
+            if (listValue == null)
+                continue;
+
+            list.add(listValue);
+        }
+
+        record.put(name.name.toString(), list);
+    }
+
+    private Object getDeserializedValue(AbstractType<?> type, ByteBuffer value) {
+        if (value == null) {
+            return null;
+        }
+
         Object valueDeserialized = type.compose(value);
 
         AbstractType<?> baseType = (type instanceof ReversedType<?>)
@@ -183,8 +240,6 @@ public class CQLMapper extends Mapper<AegisthusKey, AtomWritable, AvroKey<Generi
             valueDeserialized = date.getTime();
         }
 
-        //LOG.info("Setting {} type {} to class {}", name.name.toString(), type, valueDeserialized.getClass());
-
-        record.put(name.name.toString(), valueDeserialized);
+        return valueDeserialized;
     }
 }
