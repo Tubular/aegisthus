@@ -26,8 +26,8 @@ import com.netflix.aegisthus.io.writable.AegisthusKeySortingComparator;
 import com.netflix.aegisthus.io.writable.AtomWritable;
 import com.netflix.aegisthus.io.writable.RowWritable;
 import com.netflix.aegisthus.mapreduce.CassSSTableReducer;
+import com.netflix.aegisthus.output.AvroOutputFormat;
 import com.netflix.aegisthus.output.CustomFileNameFileOutputFormat;
-import com.netflix.aegisthus.output.JsonOutputFormat;
 import com.netflix.aegisthus.output.SSTableOutputFormat;
 import com.netflix.aegisthus.tools.DirectoryWalker;
 import com.netflix.aegisthus.util.CFMetadataUtility;
@@ -224,7 +224,7 @@ public class Aegisthus extends Configured implements Tool {
         if (cl.hasOption(Feature.CMD_ARG_PRODUCE_SSTABLE)) {
             job.setOutputFormatClass(SSTableOutputFormat.class);
         } else {
-            job.setOutputFormatClass(JsonOutputFormat.class);
+            job.setOutputFormatClass(AvroOutputFormat.class);
         }
         CustomFileNameFileOutputFormat.setOutputPath(job, new Path(cl.getOptionValue(Feature.CMD_ARG_OUTPUT_DIR)));
 
