@@ -9,7 +9,7 @@
             {"name": "int_field", "type": ["null", "int"]},
             {"name": "list_int_field", "type": {"type": "array", "items": "int"}},
             {"name": "set_text_field", "type": {"type": "array", "items": "string"}},
-            {"name": "map_time_field", "type": {"type": "map", "values": "long"}},
+            {"name": "map_time_field", "type": {"type": "map", "values": "string"}},
             {"name": "map_long_field", "type": {"type": "map", "values": "long"}}
         ]
 }
