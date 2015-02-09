@@ -24,6 +24,7 @@ import org.apache.hadoop.mapreduce.TaskAttemptContext;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.text.SimpleDateFormat;
 import java.util.*;
 
 
@@ -37,8 +38,10 @@ public class AvroOutputFormat extends CustomFileNameFileOutputFormat<BytesWritab
         final FSDataOutputStream outputStream = workFile.getFileSystem(context.getConfiguration()).create(workFile, false);
         final DatumWriter<GenericRecord> datumWriter = new GenericDatumWriter<GenericRecord>(avroSchema);
         final DataFileWriter<GenericRecord> dataFileWriter = new DataFileWriter<GenericRecord>(datumWriter);
+        final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");  // To simplify queries in Hive
 
         dataFileWriter.create(avroSchema, outputStream);
+        dateFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
 
         return new RecordWriter<BytesWritable, RowWritable>() {
             @Override
@@ -186,7 +189,7 @@ public class AvroOutputFormat extends CustomFileNameFileOutputFormat<BytesWritab
                     valueDeserialized = data;
                 } else if (baseType instanceof TimestampType) {
                     Date date = (Date) valueDeserialized;
-                    valueDeserialized = date.getTime();
+                    valueDeserialized = dateFormat.format(date);
                 }
 
                 return valueDeserialized;
