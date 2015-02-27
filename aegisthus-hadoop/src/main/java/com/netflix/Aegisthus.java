@@ -43,7 +43,6 @@ import org.apache.commons.cli.HelpFormatter;
 import org.apache.commons.cli.OptionBuilder;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
-import org.apache.commons.io.IOUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.FileStatus;
@@ -145,11 +144,6 @@ public class Aegisthus extends Configured implements Tool {
         return output;
     }
 
-    private String getAvroSchema(String schemaLocation, Configuration conf) throws IOException {
-        Path schemaPath = new Path(schemaLocation);
-        return IOUtils.toString(schemaPath.getFileSystem(conf).open(schemaPath));
-    }
-
     @SuppressWarnings("static-access")
     CommandLine getOptions(String[] args) {
         Options opts = new Options();
@@ -235,7 +229,7 @@ public class Aegisthus extends Configured implements Tool {
         TextInputFormat.setInputPaths(job, paths.toArray(new Path[paths.size()]));
 
         if (cl.hasOption(Feature.CMD_ARG_AVRO_SCHEMA_FILE)) {
-            String avroSchemaString = getAvroSchema(cl.getOptionValue(Feature.CMD_ARG_AVRO_SCHEMA_FILE), job.getConfiguration());
+            String avroSchemaString = cl.getOptionValue(Feature.CMD_ARG_AVRO_SCHEMA_FILE);
             Schema avroSchema = new Schema.Parser().parse(avroSchemaString);
             AvroJob.setOutputKeySchema(job, avroSchema);
             job.setOutputFormatClass(AvroOutputFormat.class);
@@ -259,7 +253,7 @@ public class Aegisthus extends Configured implements Tool {
         public static final String CMD_ARG_INPUT_FILE = "input";
         public static final String CMD_ARG_OUTPUT_DIR = "output";
         public static final String CMD_ARG_PRODUCE_SSTABLE = "produceSSTable";
-        public static final String CMD_ARG_AVRO_SCHEMA_FILE = "avroSchemaFile";
+        public static final String CMD_ARG_AVRO_SCHEMA_FILE = "avroSchema";
 
         /**
          * If set this is the blocksize aegisthus will use when splitting input files otherwise the hadoop vaule will
