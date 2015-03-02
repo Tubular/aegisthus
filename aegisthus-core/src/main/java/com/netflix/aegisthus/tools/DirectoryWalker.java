@@ -434,8 +434,8 @@ public class DirectoryWalker implements Cloneable {
 	}
 
 	/**
-	 * Example:<br/>
-	 * DirectoryWalker.with(conf).add("/my/path").relativePathStrings();<br/>
+	 * Example:<br>
+	 * DirectoryWalker.with(conf).add("/my/path").relativePathStrings();<br>
 	 * will return the relative paths of all the files under /my/path
 	 * 
 	 * @return the relative paths in a directory.
