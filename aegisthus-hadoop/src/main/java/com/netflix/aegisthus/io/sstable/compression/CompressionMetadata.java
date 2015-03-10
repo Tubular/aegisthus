@@ -30,8 +30,8 @@ import java.util.List;
 import java.util.Map;
 
 public class CompressionMetadata {
-    private List<Integer> chunkLengths;
-    private int current;
+    public List<Integer> chunkLengths;
+    public int current;
     private long dataLength;
     private CompressionParameters parameters;
 

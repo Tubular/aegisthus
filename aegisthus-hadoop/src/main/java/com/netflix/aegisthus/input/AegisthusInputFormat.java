@@ -16,13 +16,13 @@
 package com.netflix.aegisthus.input;
 
 import com.google.common.base.Strings;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.netflix.Aegisthus;
 import com.netflix.aegisthus.input.readers.SSTableRecordReader;
 import com.netflix.aegisthus.input.splits.AegCompressedSplit;
 import com.netflix.aegisthus.input.splits.AegSplit;
 import com.netflix.aegisthus.io.sstable.IndexDatabaseScanner;
+import com.netflix.aegisthus.io.sstable.compression.CompressionMetadata;
 import com.netflix.aegisthus.io.writable.AegisthusKey;
 import com.netflix.aegisthus.io.writable.AtomWritable;
 import org.apache.hadoop.fs.BlockLocation;
@@ -40,8 +40,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.BufferedInputStream;
 import java.io.IOException;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 
 /**
  * The AegisthusInputFormat class handles creating splits and record readers.
@@ -70,12 +69,6 @@ public class AegisthusInputFormat extends FileInputFormat<AegisthusKey, AtomWrit
         Path path = file.getPath();
         FileSystem fs = path.getFileSystem(job.getConfiguration());
         BlockLocation[] blkLocations = fs.getFileBlockLocations(file, 0, length);
-
-        Path compressionPath = new Path(path.getParent(), path.getName().replaceAll("-Data.db", "-CompressionInfo.db"));
-        if (fs.exists(compressionPath)) {
-            return ImmutableList.of((InputSplit) AegCompressedSplit.createAegCompressedSplit(path, 0, length,
-                    blkLocations[blkLocations.length - 1].getHosts(), compressionPath));
-        }
 
         long blockSize = file.getBlockSize();
         String aegisthusBlockSize = job.getConfiguration().get(Aegisthus.Feature.CONF_BLOCKSIZE);
@@ -129,17 +122,68 @@ public class AegisthusInputFormat extends FileInputFormat<AegisthusKey, AtomWrit
         return splits;
     }
 
+    List<InputSplit> getSSTableSplitsForCompressedFile(JobContext job, FileStatus file) throws IOException {
+        Path dataPath = file.getPath();
+        Path compressionPath = new Path(dataPath.getParent(), dataPath.getName().replaceAll("-Data.db", "-CompressionInfo.db"));
+        FileSystem fs = dataPath.getFileSystem(job.getConfiguration());
+        CompressionMetadata compressionMetadata = new CompressionMetadata(new BufferedInputStream(fs.open(compressionPath)), file.getLen());
+        List<InputSplit> splits = Lists.newArrayList();
+        long blockSize = file.getBlockSize();
+        String aegisthusBlockSize = job.getConfiguration().get(Aegisthus.Feature.CONF_BLOCKSIZE);
+        if (!Strings.isNullOrEmpty(aegisthusBlockSize)) {
+            blockSize = Long.valueOf(aegisthusBlockSize);
+        }
+
+        // For file less than one split
+        if (compressionMetadata.getDataLength() <= 4 * blockSize) {
+            System.out.print("Compression ");
+            System.out.println(compressionMetadata.getDataLength());
+            splits.add(AegCompressedSplit.createAegCompressedSplit(dataPath, 0, file.getLen(), fs.getFileBlockLocations(dataPath, 0, file.getLen())[0].getHosts(), compressionPath));
+            return splits;
+        }
+
+        // For file with multiple splits
+        Path indexPath = new Path(dataPath.getParent(), dataPath.getName().replaceAll("-Data.db", "-Index.db"));
+        IndexDatabaseScanner scanner = new IndexDatabaseScanner(new BufferedInputStream(fs.open(indexPath)));
+
+        long prevIndex = 0;
+        long currIndex = 0;
+        while (scanner.hasNext()) {
+            if (currIndex - prevIndex > 4 * blockSize) {
+                BlockLocation[] blocks = fs.getFileBlockLocations(dataPath, prevIndex / 4, (currIndex - prevIndex) / 4);
+                Set<String> hosts = new HashSet<String>();
+                for (BlockLocation b: blocks)
+                    hosts.addAll(Arrays.asList(b.getHosts()));
+
+                splits.add(AegCompressedSplit.createAegCompressedSplit(dataPath, prevIndex, currIndex, hosts.toArray(new String[hosts.size()]), compressionPath));
+                System.out.println(String.format("from - %d, to - %d", prevIndex, currIndex));
+                prevIndex = currIndex;
+            } else {
+                currIndex = scanner.next().getDataFileOffset();
+            }
+        }
+
+        return splits;
+    }
+
     @Override
     public List<InputSplit> getSplits(JobContext job) throws IOException {
         List<FileStatus> files = listStatus(job);
 
         List<InputSplit> splits = Lists.newArrayListWithExpectedSize(files.size());
         for (FileStatus file : files) {
-            String name = file.getPath().getName();
-            if (name.endsWith("-Data.db")) {
+            Path path = file.getPath();
+            String name = path.getName();
+            FileSystem fs = path.getFileSystem(job.getConfiguration());
+            Path compressionPath = new Path(path.getParent(), path.getName().replaceAll("-Data.db", "-CompressionInfo.db"));
+
+            if (name.endsWith("-Data.db") && fs.exists(compressionPath)) {
+                splits.addAll(getSSTableSplitsForCompressedFile(job, file));
+            } else {
                 splits.addAll(getSSTableSplitsForFile(job, file));
             }
         }
+
         return splits;
     }
 }

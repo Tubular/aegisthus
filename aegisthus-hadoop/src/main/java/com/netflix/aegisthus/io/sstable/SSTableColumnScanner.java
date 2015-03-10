@@ -51,7 +51,8 @@ public class SSTableColumnScanner {
         this.input = new DataInputStream(is);
         if (this.start > 0) {
             LOG.info("skipping to start: {}", start);
-            skipUnsafe(start);
+            long skipped = this.input.skip(start);
+            assert skipped == start;
         }
         this.pos = start;
     }
@@ -183,13 +184,5 @@ public class SSTableColumnScanner {
         });
         LOG.info("created observable");
         return ret;
-    }
-
-    void skipUnsafe(long bytes) throws IOException {
-        if (bytes <= 0) {
-            return;
-        }
-
-        FileUtils.skipBytesFully(input, bytes);
     }
 }
