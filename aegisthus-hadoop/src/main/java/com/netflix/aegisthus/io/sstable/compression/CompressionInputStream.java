@@ -15,6 +15,10 @@
  */
 package com.netflix.aegisthus.io.sstable.compression;
 
+import org.apache.cassandra.io.util.FileUtils;
+import org.apache.hadoop.fs.FSDataInputStream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.xerial.snappy.SnappyOutputStream;
 
 import javax.annotation.Nonnull;
@@ -29,13 +33,16 @@ import static java.lang.Math.min;
  * the format produced by {@link SnappyOutputStream}.
  */
 public class CompressionInputStream extends InputStream {
+    private static final Logger LOG = LoggerFactory.getLogger(CompressionInputStream.class);
+
     private final byte[] buffer;
     private final CompressionMetadata cm;
-    private final InputStream in;
+    private final FSDataInputStream in;
     private final byte[] input;
     private boolean closed;
     private int position;
     private int valid;
+    private int blockSize = 65536;
 
     /**
      * Creates a Snappy input stream to read data from the specified underlying
@@ -44,7 +51,7 @@ public class CompressionInputStream extends InputStream {
      * @param in
      *            the underlying input stream
      */
-    public CompressionInputStream(InputStream in, CompressionMetadata cm) {
+    public CompressionInputStream(FSDataInputStream in, CompressionMetadata cm) {
         this.cm = cm;
         this.in = in;
         //chunkLength*2 because there are some cases where the data is larger than specified
@@ -66,6 +73,29 @@ public class CompressionInputStream extends InputStream {
         readInput(cm.currentLength());
         cm.incrementChunk();
         return valid;
+    }
+
+    @Override
+    public long skip(long n) throws IOException {
+        if (n - valid > blockSize) {
+            long chunksToSkip = (n - valid) / blockSize;
+            long skipped = 0;
+            long offset = 0;
+
+            LOG.info("To skip {}", chunksToSkip);
+
+            for (int i = 0; i < chunksToSkip; i++) {
+                offset += (long) cm.currentLength() + 4;
+                skipped += (long) cm.chunkLength();
+                cm.incrementChunk();
+            }
+            LOG.info("Seek from {} on {}", in.getPos(), offset);
+            in.seek(in.getPos() + offset);
+            valid = 0;
+            position = 0;
+            return super.skip((n - valid) % blockSize) + skipped;
+        }
+        return super.skip(n);
     }
 
     @Override
@@ -123,12 +153,7 @@ public class CompressionInputStream extends InputStream {
             offset += size;
         }
         // ignore checksum for now
-        byte[] checksum = new byte[4];
-        int size = in.read(checksum);
-
-        if (size != 4) {
-            throw new EOFException("encountered EOF while reading checksum");
-        }
+        FileUtils.skipBytesFully(in, 4);
 
         valid = cm.compressor().uncompress(input, 0, length, buffer, 0);
         position = 0;

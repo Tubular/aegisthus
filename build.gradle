@@ -3,7 +3,7 @@ ext.githubProjectName = rootProject.name // Change if github project name is not
 
 project.ext {
     buildWithNebulaPlugin = project.hasProperty('buildWithNebulaPlugin')
-    hadoopVersion = project.hasProperty('hadoopVersion') ? hadoopVersion : '2.4.1'
+    hadoopVersion = project.hasProperty('hadoopVersion') ? hadoopVersion : '2.4.0'
 }
 
 buildscript {
@@ -104,7 +104,7 @@ project(':aegisthus-hadoop') {
         includeInJar 'org.apache.cassandra:cassandra-all:2.0.10'
 
         compile 'org.apache.avro:avro:1.7.4'
-        includeInJar 'org.apache.avro:avro-mapred:1.7.4:hadoop2'
+        includeInJar 'org.apache.avro:avro-mapred:1.7.4'
 
         // cassandra selected transitive deps
         includeInJar 'org.apache.thrift:libthrift:0.9.1'

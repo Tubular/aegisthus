@@ -24,13 +24,13 @@ public class AegCompressedSplit extends AegSplit {
 
     public static AegCompressedSplit createAegCompressedSplit(@Nonnull Path path,
             long start,
-            long length,
+            long end,
             @Nonnull String[] hosts,
             @Nonnull Path compressedPath) {
         AegCompressedSplit split = new AegCompressedSplit();
         split.path = path;
         split.start = start;
-        split.end = length + start;
+        split.end = end;
         split.hosts = hosts;
         LOG.info("start: {}, end: {}", start, split.end);
         split.compressedPath = compressedPath;
@@ -38,24 +38,14 @@ public class AegCompressedSplit extends AegSplit {
         return split;
     }
 
-    @Override
-    public long getDataEnd() {
-        if (compressionMetadata == null) {
-            throw new IllegalStateException("getDataEnd was called before getInput");
-        }
-        return compressionMetadata.getDataLength();
-    }
-
     @Nonnull
     @Override
     public InputStream getInput(@Nonnull Configuration conf) throws IOException {
         FileSystem fs = compressedPath.getFileSystem(conf);
-        InputStream dis = super.getInput(conf);
+        FSDataInputStream dataIn = fs.open(path);
         FSDataInputStream cmIn = fs.open(compressedPath);
         compressionMetadata = new CompressionMetadata(new BufferedInputStream(cmIn), getEnd() - getStart());
-        dis = new CompressionInputStream(dis, compressionMetadata);
-        end = compressionMetadata.getDataLength();
-        return dis;
+        return new CompressionInputStream(dataIn, compressionMetadata);
     }
 
     @Override
