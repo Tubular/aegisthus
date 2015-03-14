@@ -63,11 +63,7 @@ public class AvroOutputFormat extends CustomFileNameFileOutputFormat<BytesWritab
                         continue;
                     cgmBuilder.add((Column) atom);
                 }
-
-                // No columns for partition key...
-                if (cgmBuilder.groups().size() == 0)
-                    return;
-
+                
                 for (ColumnGroupMap group: cgmBuilder.groups()) {
                     GenericRecord record = new GenericData.Record(avroSchema);
 
