@@ -9,6 +9,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.WritableUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import sun.rmi.runtime.Log;
 
 import javax.annotation.Nonnull;
 import java.io.BufferedInputStream;
@@ -19,21 +20,23 @@ import java.io.InputStream;
 
 public class AegCompressedSplit extends AegSplit {
     private static final Logger LOG = LoggerFactory.getLogger(AegCompressedSplit.class);
-    private Path compressedPath;
-    private CompressionMetadata compressionMetadata = null;
+    protected Path compressedPath;
+    protected long compressedLength;
 
     public static AegCompressedSplit createAegCompressedSplit(@Nonnull Path path,
             long start,
             long end,
             @Nonnull String[] hosts,
-            @Nonnull Path compressedPath) {
+            @Nonnull Path compressedPath,
+            long compressedLength) {
         AegCompressedSplit split = new AegCompressedSplit();
         split.path = path;
         split.start = start;
         split.end = end;
         split.hosts = hosts;
-        LOG.info("start: {}, end: {}", start, split.end);
         split.compressedPath = compressedPath;
+        split.compressedLength = compressedLength;
+        LOG.info("start: {}, end: {}", start, split.end);
 
         return split;
     }
@@ -44,7 +47,7 @@ public class AegCompressedSplit extends AegSplit {
         FileSystem fs = compressedPath.getFileSystem(conf);
         FSDataInputStream dataIn = fs.open(path);
         FSDataInputStream cmIn = fs.open(compressedPath);
-        compressionMetadata = new CompressionMetadata(new BufferedInputStream(cmIn), getEnd() - getStart());
+        CompressionMetadata compressionMetadata = new CompressionMetadata(new BufferedInputStream(cmIn), compressedLength);
         return new CompressionInputStream(dataIn, compressionMetadata);
     }
 
@@ -52,11 +55,13 @@ public class AegCompressedSplit extends AegSplit {
     public void readFields(@Nonnull DataInput in) throws IOException {
         super.readFields(in);
         compressedPath = new Path(WritableUtils.readString(in));
+        compressedLength = in.readLong();
     }
 
     @Override
     public void write(@Nonnull DataOutput out) throws IOException {
         super.write(out);
         WritableUtils.writeString(out, compressedPath.toUri().toString());
+        out.writeLong(compressedLength);
     }
 }
