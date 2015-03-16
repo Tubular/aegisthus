@@ -63,30 +63,27 @@ public class AvroOutputFormat extends CustomFileNameFileOutputFormat<BytesWritab
                         continue;
                     cgmBuilder.add((Column) atom);
                 }
+                
+                for (ColumnGroupMap group: cgmBuilder.groups()) {
+                    GenericRecord record = new GenericData.Record(avroSchema);
 
-                // Tombstones?
-                if (cgmBuilder.groups().size() == 0)
-                    return;
+                    // Partition columns
+                    for (CFDefinition.Name name : cfDefinition.partitionKeys()) {
+                        addValue(record, name, keyComponents[name.position]);
+                    }
 
-                ColumnGroupMap group = cgmBuilder.firstGroup();
-                GenericRecord record = new GenericData.Record(avroSchema);
+                    // Clustering columns
+                    for (CFDefinition.Name name : cfDefinition.clusteringColumns()) {
+                        addValue(record, name, group.getKeyComponent(name.position));
+                    }
 
-                // Partition columns
-                for (CFDefinition.Name name : cfDefinition.partitionKeys()) {
-                    addValue(record, name, keyComponents[name.position]);
+                    // Regular columns
+                    for (CFDefinition.Name name : cfDefinition.regularColumns()) {
+                        addGroup(record, name, group);
+                    }
+
+                    dataFileWriter.append(record);
                 }
-
-                // Clustering columns
-                for (CFDefinition.Name name : cfDefinition.clusteringColumns()) {
-                    addValue(record, name, group.getKeyComponent(name.position));
-                }
-
-                // Regular columns
-                for (CFDefinition.Name name : cfDefinition.regularColumns()) {
-                    addGroup(record, name, group);
-                }
-
-                dataFileWriter.append(record);
             }
 
             @Override
