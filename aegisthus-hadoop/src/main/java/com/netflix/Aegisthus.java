@@ -307,5 +307,9 @@ public class Aegisthus extends Configured implements Tool {
          * The CQL "Create Table" statement that defines the schema of the input sstables.
          */
         public static final String CONF_CQL_SCHEMA = "aegisthus.cql_schema";
+        /**
+         * Format of date in avro files, default is 'yyyy-MM-dd HH:mm:ss.SSS'
+         */
+        public static final String CONF_AVRO_DATETIME_FORAMT = "aegisthus.avro.datetime_format";
     }
 }

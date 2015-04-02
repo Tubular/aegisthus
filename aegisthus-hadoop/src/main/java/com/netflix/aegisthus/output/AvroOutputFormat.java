@@ -1,5 +1,6 @@
 package com.netflix.aegisthus.output;
 
+import com.netflix.Aegisthus;
 import com.netflix.aegisthus.io.writable.RowWritable;
 import com.netflix.aegisthus.util.CFMetadataUtility;
 import org.apache.avro.Schema;
@@ -38,7 +39,11 @@ public class AvroOutputFormat extends CustomFileNameFileOutputFormat<BytesWritab
         final FSDataOutputStream outputStream = workFile.getFileSystem(context.getConfiguration()).create(workFile, false);
         final DatumWriter<GenericRecord> datumWriter = new GenericDatumWriter<GenericRecord>(avroSchema);
         final DataFileWriter<GenericRecord> dataFileWriter = new DataFileWriter<GenericRecord>(datumWriter);
-        final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");  // To simplify queries in Hive
+
+        // To simplify queries in Hive
+        final SimpleDateFormat dateFormat = new SimpleDateFormat(
+                context.getConfiguration().get(Aegisthus.Feature.CONF_AVRO_DATETIME_FORAMT, "yyyy-MM-dd HH:mm:ss.SSS")
+        );
 
         dataFileWriter.create(avroSchema, outputStream);
         dateFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
