@@ -7,10 +7,7 @@ import org.apache.cassandra.io.compress.ICompressor;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.commons.lang3.tuple.Pair;
 
-import java.io.DataInput;
-import java.io.DataInputStream;
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
 import java.util.Map;
 import java.util.SortedMap;
 import java.util.TreeMap;
@@ -24,12 +21,70 @@ public class CompressionMetadata {
     public CompressionMetadata(InputStream compressionInput, long dataLength) throws IOException {
         DataInputStream stream = new DataInputStream(compressionInput);
 
-        parameters = readCompressionParameters(stream);
-        decompressedDataLength = stream.readLong();
-        compressedDataLength = dataLength;
-        offsets = readChunksOffsets(stream);
+        this.parameters = readCompressionParameters(stream);
+        this.decompressedDataLength = stream.readLong();
+        this.compressedDataLength = dataLength;
+        this.offsets = readChunksOffsets(stream);
 
         FileUtils.closeQuietly(stream);
+    }
+
+    public CompressionMetadata(CompressionParameters parameters, long compressedDataLength, long decompressedDataLength,
+                               SortedMap<Long,Long> offsets) {
+        this.parameters = parameters;
+        this.offsets = offsets;
+        this.compressedDataLength = compressedDataLength;
+        this.decompressedDataLength = decompressedDataLength;
+    }
+
+    /**
+     * Generated truncated metadata only for sub-chunk of data
+     */
+    public CompressionMetadata truncateTo(long uncompressedStart, long uncompressedEnd) {
+        long minCompressed = -1;
+        long maxCompressed = -1;
+
+        for (SortedMap.Entry<Long,Long> entry: offsets.entrySet()) {
+            if (entry.getKey() <= uncompressedStart)
+                minCompressed = entry.getKey();
+
+            if (entry.getKey() >= uncompressedEnd)
+                maxCompressed = entry.getKey();
+        }
+
+        return new CompressionMetadata(
+                parameters,
+                compressedDataLength,
+                decompressedDataLength,
+                offsets.subMap(minCompressed, maxCompressed + 1)
+        );
+    }
+
+    public void writeObject(DataOutput stream) throws IOException {
+        CompressionParameters.serializer.serialize(parameters, stream, 1);
+
+        stream.writeInt(offsets.size());
+        for (SortedMap.Entry<Long,Long> entry: offsets.entrySet()) {
+            stream.writeLong(entry.getKey());
+            stream.writeLong(entry.getValue());
+        }
+
+        stream.writeLong(compressedDataLength);
+        stream.writeLong(decompressedDataLength);
+    }
+
+    public static CompressionMetadata readObject(DataInput stream) throws IOException {
+        CompressionParameters dParameters = CompressionParameters.serializer.deserialize(stream, 1);
+        SortedMap<Long,Long> dOffsets = new TreeMap<Long, Long>();
+
+        int dCount = stream.readInt();
+        for (int i = 0; i < dCount; i++)
+            dOffsets.put(stream.readLong(), stream.readLong());
+
+        long dCompressedDataLength = stream.readLong();
+        long dDecompressedDataLength = stream.readLong();
+
+        return new CompressionMetadata(dParameters, dCompressedDataLength, dDecompressedDataLength, dOffsets);
     }
 
     public int chunkLength() {
