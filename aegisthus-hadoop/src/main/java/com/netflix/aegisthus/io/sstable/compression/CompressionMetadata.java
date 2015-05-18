@@ -1,104 +1,149 @@
-/**
- * Copyright 2013 Netflix, Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package com.netflix.aegisthus.io.sstable.compression;
 
-import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.compress.CompressionParameters;
 import org.apache.cassandra.io.compress.ICompressor;
 import org.apache.cassandra.io.util.FileUtils;
+import org.apache.commons.lang3.tuple.Pair;
 
-import java.io.DataInput;
-import java.io.DataInputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.List;
+import java.io.*;
 import java.util.Map;
+import java.util.SortedMap;
+import java.util.TreeMap;
 
 public class CompressionMetadata {
-    public List<Integer> chunkLengths;
-    public int current;
-    private long dataLength;
     private CompressionParameters parameters;
+    private SortedMap<Long,Long> offsets;  // Association between compressed & uncompressed offsets
+    private long compressedDataLength;
+    private long decompressedDataLength;
 
-    public CompressionMetadata(InputStream compressionInput, long compressedLength) throws IOException {
+    public CompressionMetadata(InputStream compressionInput, long dataLength) throws IOException {
         DataInputStream stream = new DataInputStream(compressionInput);
 
-        String compressorName = stream.readUTF();
-        int optionCount = stream.readInt();
-        Map<String, String> options = Maps.newHashMap();
-        for (int i = 0; i < optionCount; ++i) {
-            String key = stream.readUTF();
-            String value = stream.readUTF();
-            options.put(key, value);
-        }
-        int chunkLength = stream.readInt();
-        try {
-            parameters = new CompressionParameters(compressorName, chunkLength, options);
-        } catch (ConfigurationException e) {
-            throw new RuntimeException("Cannot create CompressionParameters for stored parameters", e);
-        }
-
-        setDataLength(stream.readLong());
-        chunkLengths = readChunkLengths(stream, compressedLength);
-        current = 0;
+        this.parameters = readCompressionParameters(stream);
+        this.decompressedDataLength = stream.readLong();
+        this.compressedDataLength = dataLength;
+        this.offsets = readChunksOffsets(stream);
 
         FileUtils.closeQuietly(stream);
+    }
+
+    public CompressionMetadata(CompressionParameters parameters, long compressedDataLength, long decompressedDataLength,
+                               SortedMap<Long,Long> offsets) {
+        this.parameters = parameters;
+        this.offsets = offsets;
+        this.compressedDataLength = compressedDataLength;
+        this.decompressedDataLength = decompressedDataLength;
+    }
+
+    /**
+     * Generated truncated metadata only for sub-chunk of data
+     */
+    public CompressionMetadata truncateTo(long uncompressedStart, long uncompressedEnd) {
+        long minCompressed = -1;
+        long maxCompressed = -1;
+
+        for (SortedMap.Entry<Long,Long> entry: offsets.entrySet()) {
+            if (entry.getKey() <= uncompressedStart)
+                minCompressed = entry.getKey();
+
+            if (entry.getKey() >= uncompressedEnd)
+                maxCompressed = entry.getKey();
+        }
+
+        return new CompressionMetadata(
+                parameters,
+                compressedDataLength,
+                decompressedDataLength,
+                offsets.subMap(minCompressed, maxCompressed + 1)
+        );
+    }
+
+    public void writeObject(DataOutput stream) throws IOException {
+        CompressionParameters.serializer.serialize(parameters, stream, 1);
+
+        stream.writeInt(offsets.size());
+        for (SortedMap.Entry<Long,Long> entry: offsets.entrySet()) {
+            stream.writeLong(entry.getKey());
+            stream.writeLong(entry.getValue());
+        }
+
+        stream.writeLong(compressedDataLength);
+        stream.writeLong(decompressedDataLength);
+    }
+
+    public static CompressionMetadata readObject(DataInput stream) throws IOException {
+        CompressionParameters dParameters = CompressionParameters.serializer.deserialize(stream, 1);
+        SortedMap<Long,Long> dOffsets = new TreeMap<Long, Long>();
+
+        int dCount = stream.readInt();
+        for (int i = 0; i < dCount; i++)
+            dOffsets.put(stream.readLong(), stream.readLong());
+
+        long dCompressedDataLength = stream.readLong();
+        long dDecompressedDataLength = stream.readLong();
+
+        return new CompressionMetadata(dParameters, dCompressedDataLength, dDecompressedDataLength, dOffsets);
     }
 
     public int chunkLength() {
         return parameters.chunkLength();
     }
 
-    public ICompressor compressor() {
+    public ICompressor getCompressor() {
         return parameters.sstableCompressor;
     }
 
-    public int currentLength() {
-        if (current < chunkLengths.size()) {
-            return chunkLengths.get(current);
+    public Pair<Long,Long> getCompressedBoundaries(long uncompressedOffset) {
+        Pair<Long,Long> uncompressedBoundaries = getDecompressedBoundaries(uncompressedOffset);
+        return Pair.of(offsets.get(uncompressedBoundaries.getLeft()), offsets.get(uncompressedBoundaries.getRight()));
+    }
+
+    public Pair<Long,Long> getDecompressedBoundaries(long uncompressedOffset) {
+        long start = -1;
+        long end = -1;
+
+        for (long i: offsets.keySet()) {
+            if (uncompressedOffset >= i)
+                start = i;
+            if (i > uncompressedOffset && end == -1)
+                end = i;
         }
-        return -1;
+        return Pair.of(start, end);
     }
 
-    public long getDataLength() {
-        return dataLength;
+    public long getDataEnd() {
+        return decompressedDataLength;
     }
 
-    public void setDataLength(long dataLength) {
-        this.dataLength = dataLength;
-    }
+    private CompressionParameters readCompressionParameters(DataInput stream) throws IOException {
+        String compressorName = stream.readUTF();
+        int optionCount = stream.readInt();
+        Map<String, String> options = Maps.newHashMap();
 
-    public void incrementChunk() {
-        current++;
-    }
-
-    private List<Integer> readChunkLengths(DataInput input, long compressedLength) throws IOException {
-        int chunkCount = input.readInt();
-        List<Integer> lengths = Lists.newArrayList();
-
-        long prev = input.readLong();
-        for (int i = 1; i < chunkCount; i++) {
-            long cur = input.readLong();
-            lengths.add((int) (cur - prev - 4));
-            prev = cur;
+        for (int i = 0; i < optionCount; ++i) {
+            String key = stream.readUTF();
+            String value = stream.readUTF();
+            options.put(key, value);
         }
-        lengths.add((int) (compressedLength - prev - 4));
+        int chunkLength = stream.readInt();
 
-        return lengths;
+        try {
+            return new CompressionParameters(compressorName, chunkLength, options);
+        } catch (ConfigurationException e) {
+            throw new RuntimeException("Cannot create CompressionParameters for stored parameters", e);
+        }
+    }
+
+    private SortedMap<Long,Long> readChunksOffsets(DataInput stream) throws IOException {
+        SortedMap<Long,Long> extractedOffsets = new TreeMap<Long, Long>();
+        int chunkCount = stream.readInt();
+
+        for (long i = 0; i < chunkCount; i++)
+            extractedOffsets.put(i * parameters.chunkLength(), stream.readLong());
+        extractedOffsets.put(decompressedDataLength, compressedDataLength);
+
+        return extractedOffsets;
     }
 }

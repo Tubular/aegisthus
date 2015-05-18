@@ -135,8 +135,8 @@ public class AegisthusInputFormat extends FileInputFormat<AegisthusKey, AtomWrit
         }
 
         // For file less than one split
-        if (compressionMetadata.getDataLength() <= 4 * blockSize) {
-            splits.add(generateSplit(fs, dataPath, 0, compressionMetadata.getDataLength(), compressionPath, file.getLen()));
+        if (compressionMetadata.getDataEnd() <= 4 * blockSize) {
+            splits.add(generateSplit(fs, dataPath, 0, compressionMetadata.getDataEnd(), compressionMetadata));
             return splits;
         }
 
@@ -148,7 +148,7 @@ public class AegisthusInputFormat extends FileInputFormat<AegisthusKey, AtomWrit
         long currIndex = 0;
         while (scanner.hasNext()) {
             if (currIndex - prevIndex > 4 * blockSize) {
-                splits.add(generateSplit(fs, dataPath, prevIndex, currIndex, compressionPath, file.getLen()));
+                splits.add(generateSplit(fs, dataPath, prevIndex, currIndex, compressionMetadata));
                 prevIndex = currIndex;
             } else {
                 currIndex = scanner.next().getDataFileOffset();
@@ -156,18 +156,18 @@ public class AegisthusInputFormat extends FileInputFormat<AegisthusKey, AtomWrit
         }
 
         if (currIndex != prevIndex)
-            splits.add(generateSplit(fs, dataPath, prevIndex, compressionMetadata.getDataLength(), compressionPath, file.getLen()));
+            splits.add(generateSplit(fs, dataPath, prevIndex, compressionMetadata.getDataEnd(), compressionMetadata));
 
         return splits;
     }
 
-    private AegCompressedSplit generateSplit(FileSystem fs, Path dataPath, long startIndex, long endIndex, Path compressionPath, long compressedLength) throws IOException {
+    private AegCompressedSplit generateSplit(FileSystem fs, Path dataPath, long startIndex, long endIndex, CompressionMetadata metadata) throws IOException {
         BlockLocation[] blocks = fs.getFileBlockLocations(dataPath, startIndex / 4, (endIndex - startIndex) / 4);
         Set<String> hosts = new HashSet<String>();
         for (BlockLocation b: blocks)
             hosts.addAll(Arrays.asList(b.getHosts()));
 
-        return AegCompressedSplit.createAegCompressedSplit(dataPath, startIndex, endIndex, hosts.toArray(new String[hosts.size()]), compressionPath, compressedLength);
+        return AegCompressedSplit.createAegCompressedSplit(dataPath, startIndex, endIndex, hosts.toArray(new String[hosts.size()]), metadata);
     }
 
     @Override
