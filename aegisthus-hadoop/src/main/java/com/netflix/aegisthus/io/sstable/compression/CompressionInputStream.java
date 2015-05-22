@@ -106,7 +106,7 @@ public class CompressionInputStream extends InputStream {
         int compressedBoundariesLength = (int) (compressedBoundaries.getRight() - compressedBoundaries.getLeft() - 4);
         int decompressedBoundariesLength = (int) (decompressedBoundaries.getRight() - decompressedBoundaries.getLeft());
 
-        LOG.debug("Trying decompress chunk {}", compressedBoundaries);
+        LOG.debug("Trying to decompress chunk {}", compressedBoundaries);
 
         // Set boundaries for new chunk
         decompressedChunkStart = decompressedBoundaries.getLeft();
@@ -116,10 +116,9 @@ public class CompressionInputStream extends InputStream {
 
         // Read compressed chunk
         in.seek(compressedBoundaries.getLeft());
-        int successfullyRead = in.read(compressedChunk, 0, compressedBoundariesLength);
-        assert successfullyRead == compressedBoundariesLength;
+        in.readFully(compressedChunk, 0, compressedBoundariesLength);
 
-        LOG.debug("Successfully read {} bytes for chunk {}", successfullyRead, compressedBoundaries);
+        LOG.info("Successfully read {} bytes for chunk {}", compressedBoundariesLength, compressedBoundaries);
 
         // Decompress a chunk
         int successfullyDecompressed = cm.getCompressor().uncompress(
