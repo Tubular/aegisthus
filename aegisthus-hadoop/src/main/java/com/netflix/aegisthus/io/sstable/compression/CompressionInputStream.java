@@ -118,7 +118,7 @@ public class CompressionInputStream extends InputStream {
         in.seek(compressedBoundaries.getLeft());
         in.readFully(compressedChunk, 0, compressedBoundariesLength);
 
-        LOG.info("Successfully read {} bytes for chunk {}", compressedBoundariesLength, compressedBoundaries);
+        LOG.debug("Successfully read {} bytes for chunk {}", compressedBoundariesLength, compressedBoundaries);
 
         // Decompress a chunk
         int successfullyDecompressed = cm.getCompressor().uncompress(
