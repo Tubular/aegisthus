@@ -174,7 +174,7 @@ public class AegisthusInputFormat extends FileInputFormat<AegisthusKey, AtomWrit
     public List<InputSplit> getSplits(JobContext job) throws IOException {
         List<FileStatus> files = listStatus(job);
 
-        List<InputSplit> splits = Lists.newArrayListWithExpectedSize(files.size());
+        List<InputSplit> splits = Lists.newArrayListWithExpectedSize(files.size() * 10);
         for (FileStatus file : files) {
             Path path = file.getPath();
             String name = path.getName();

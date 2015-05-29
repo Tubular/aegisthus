@@ -31,7 +31,8 @@ public class AegCompressedSplit extends AegSplit {
         split.hosts = hosts;
         split.metadata = metadata.truncateTo(start, end);
 
-        LOG.info("start: {}, end: {}", start, split.end);
+        LOG.info("start: {}, end: {}, orig length: {}, compressed length: {}",
+                start, end, metadata.size(), split.metadata.size());
 
         return split;
     }

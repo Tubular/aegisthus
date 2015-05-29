@@ -106,7 +106,7 @@ public class CompressionInputStream extends InputStream {
         int compressedBoundariesLength = (int) (compressedBoundaries.getRight() - compressedBoundaries.getLeft() - 4);
         int decompressedBoundariesLength = (int) (decompressedBoundaries.getRight() - decompressedBoundaries.getLeft());
 
-        LOG.debug("Trying to decompress chunk {}", compressedBoundaries);
+        LOG.debug("Trying to decompress chunk {} for position {}", compressedBoundaries, position);
 
         // Set boundaries for new chunk
         decompressedChunkStart = decompressedBoundaries.getLeft();
