@@ -109,7 +109,7 @@ public class Aegisthus extends Configured implements Tool {
         if (this.version == null) {
             this.version = descriptor.version;
         } else if (!this.version.equals(descriptor.version)) {
-            throw new IllegalStateException("All files must have the same sstable version.  File '" + filename
+            LOG.warn("Your files have different sstable versions.  File '" + filename
                     + "' has version '" + descriptor.version + "' and we have already seen a file with version '"
                     + version + "'");
         }
