@@ -75,6 +75,8 @@ public class AegisthusInputFormat extends FileInputFormat<AegisthusKey, AtomWrit
         if (!Strings.isNullOrEmpty(aegisthusBlockSize)) {
             blockSize = Long.valueOf(aegisthusBlockSize);
         }
+
+
         long maxSplitSize = (long) (blockSize * .99);
         long fuzzySplit = (long) (blockSize * 1.2);
 
@@ -126,17 +128,24 @@ public class AegisthusInputFormat extends FileInputFormat<AegisthusKey, AtomWrit
         Path dataPath = file.getPath();
         Path compressionPath = new Path(dataPath.getParent(), dataPath.getName().replaceAll("-Data.db", "-CompressionInfo.db"));
         FileSystem fs = dataPath.getFileSystem(job.getConfiguration());
-        CompressionMetadata compressionMetadata = new CompressionMetadata(new BufferedInputStream(fs.open(compressionPath)), file.getLen());
-        List<InputSplit> splits = Lists.newArrayList();
+
+        long compressedDataLength = file.getLen();
+        long decompressedDataLength = CompressionMetadata.getDecompressedDataLength(fs.open(compressionPath));
+
+        // Get DFS block size
         long blockSize = file.getBlockSize();
         String aegisthusBlockSize = job.getConfiguration().get(Aegisthus.Feature.CONF_BLOCKSIZE);
         if (!Strings.isNullOrEmpty(aegisthusBlockSize)) {
             blockSize = Long.valueOf(aegisthusBlockSize);
         }
 
+        LOG.info("DFS block size is {}", blockSize);
+
+        List<InputSplit> splits = Lists.newArrayListWithExpectedSize((int) (decompressedDataLength / (4 * blockSize)));
+
         // For file less than one split
-        if (compressionMetadata.getDataEnd() <= 4 * blockSize) {
-            splits.add(generateSplit(fs, dataPath, 0, compressionMetadata.getDataEnd(), compressionMetadata));
+        if (decompressedDataLength <= 4 * blockSize) {
+            splits.add(generateSplit(fs, dataPath, 0, decompressedDataLength, compressedDataLength));
             return splits;
         }
 
@@ -148,7 +157,7 @@ public class AegisthusInputFormat extends FileInputFormat<AegisthusKey, AtomWrit
         long currIndex = 0;
         while (scanner.hasNext()) {
             if (currIndex - prevIndex > 4 * blockSize) {
-                splits.add(generateSplit(fs, dataPath, prevIndex, currIndex, compressionMetadata));
+                splits.add(generateSplit(fs, dataPath, prevIndex, currIndex, compressedDataLength));
                 prevIndex = currIndex;
             } else {
                 currIndex = scanner.next().getDataFileOffset();
@@ -156,18 +165,20 @@ public class AegisthusInputFormat extends FileInputFormat<AegisthusKey, AtomWrit
         }
 
         if (currIndex != prevIndex)
-            splits.add(generateSplit(fs, dataPath, prevIndex, compressionMetadata.getDataEnd(), compressionMetadata));
+            splits.add(generateSplit(fs, dataPath, prevIndex, decompressedDataLength, compressedDataLength));
 
         return splits;
     }
 
-    private AegCompressedSplit generateSplit(FileSystem fs, Path dataPath, long startIndex, long endIndex, CompressionMetadata metadata) throws IOException {
+    private AegCompressedSplit generateSplit(FileSystem fs, Path dataPath, long startIndex, long endIndex,
+                                             long compressedDataLength) throws IOException {
         BlockLocation[] blocks = fs.getFileBlockLocations(dataPath, startIndex / 4, (endIndex - startIndex) / 4);
         Set<String> hosts = new HashSet<String>();
         for (BlockLocation b: blocks)
             hosts.addAll(Arrays.asList(b.getHosts()));
 
-        return AegCompressedSplit.createAegCompressedSplit(dataPath, startIndex, endIndex, hosts.toArray(new String[hosts.size()]), metadata);
+        return AegCompressedSplit.createAegCompressedSplit(
+                dataPath, startIndex, endIndex, compressedDataLength, hosts.toArray(new String[hosts.size()]));
     }
 
     @Override
