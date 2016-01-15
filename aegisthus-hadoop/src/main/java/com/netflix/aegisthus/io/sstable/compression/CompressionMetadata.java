@@ -7,41 +7,37 @@ import org.apache.cassandra.io.compress.CompressionParameters;
 import org.apache.cassandra.io.compress.ICompressor;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.hadoop.fs.FSDataInputStream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.*;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 public class CompressionMetadata {
+    private static final Logger LOG = LoggerFactory.getLogger(CompressionInputStream.class);
+
     private CompressionParameters parameters;
-    private List<Integer> offsets;
-    private long compressedStart;
-    private long decompressedStart;
-    private long compressedDataLength;
-    private long decompressedDataLength;
+    private long compressedDataLength;  // Length of compressed sstable in bytes
+    private long decompressedDataLength;  // Length of decompressed sstable in bytes
+    private int offsetsCount;  // Total count of offsets that are available in CompressionInfo file
+    private int firstOffsetIndex;  // Index of the first offset among all offsets available in CompressionInfo file
+    private List<Long> offsets;  // Subset of offsets for compression blocks within a decompressed file in bytes
 
-    public CompressionMetadata(InputStream compressionInput, long dataLength) throws IOException {
-        DataInputStream stream = new DataInputStream(compressionInput);
-
-        this.parameters = readCompressionParameters(stream);
-        this.compressedStart = 0;
-        this.decompressedStart = 0;
-        this.decompressedDataLength = stream.readLong();
+    public CompressionMetadata(FSDataInputStream compressionInput, long start, long end, long dataLength) throws IOException {
+        this.parameters = readCompressionParameters(compressionInput);
         this.compressedDataLength = dataLength;
-        this.offsets = readChunksOffsets(stream);
-
-        FileUtils.closeQuietly(stream);
+        this.decompressedDataLength = compressionInput.readLong();
+        this.offsetsCount = compressionInput.readInt();
+        this.firstOffsetIndex = (int) start / this.parameters.chunkLength();
+        this.offsets = readChunksOffsets(compressionInput, start, end);
+        FileUtils.closeQuietly(compressionInput);
     }
 
-    public CompressionMetadata(CompressionParameters parameters, long compressedDataLength, long decompressedDataLength,
-                               long compressedStart, long decompressedStart, List<Integer> offsets) {
-        this.parameters = parameters;
-        this.compressedStart = compressedStart;
-        this.decompressedStart = decompressedStart;
-        this.compressedDataLength = compressedDataLength;
-        this.decompressedDataLength = decompressedDataLength;
-        this.offsets = offsets;
+    public static long getDecompressedDataLength(FSDataInputStream compressionInput) throws IOException {
+        CompressionMetadata metadata = new CompressionMetadata(compressionInput, 0, 0, 0);
+        return metadata.getDataEnd();
     }
 
     public int chunkLength() {
@@ -53,94 +49,40 @@ public class CompressionMetadata {
     }
 
     public Pair<Long,Long> getCompressedBoundaries(long decompressedOffset) {
-        int index = (int) ((decompressedOffset - decompressedStart) / chunkLength());
-        long start = compressedStart;
-        for (int i = 0; i < index; i++)
-            start += offsets.get(i);
-        long end = start + offsets.get(index);
+        int globalIndex = (int) decompressedOffset / chunkLength();
+        int relativeIndex = globalIndex - firstOffsetIndex;
+
+        long start;
+        long end;
+
+        try {
+            start = this.offsets.get(relativeIndex);
+        } catch (IndexOutOfBoundsException e) {
+            start = 0;
+        }
+
+        try {
+            end = this.offsets.get(relativeIndex + 1);
+        } catch (IndexOutOfBoundsException e) {
+            end = compressedDataLength;
+        }
 
         return Pair.of(start, end);
     }
 
-    public Pair<Long,Long> getDecompressedBoundaries(long uncompressedOffset) {
-        long start = uncompressedOffset - (uncompressedOffset % chunkLength());
-        long end = start + chunkLength();
+    public Pair<Long,Long> getDecompressedBoundaries(long decompressedOffset) {
+        long start = decompressedOffset - (decompressedOffset % chunkLength());
+        long end = Math.min(start + chunkLength(), getDataEnd());
 
         return Pair.of(start, end);
+    }
+
+    public int size() {
+        return offsetsCount;
     }
 
     public long getDataEnd() {
         return decompressedDataLength;
-    }
-
-    /**
-     * Generated truncated metadata only for sub-chunk of data
-     */
-    public CompressionMetadata truncateTo(long uncompressedStart, long uncompressedEnd) {
-        long uncompressedPosition = 0;
-        long compressedPosition = 0;
-        long compressedStart = 0;
-        List<Integer> subOffsets = new ArrayList<Integer>();
-
-        for (int offset: offsets) {
-            uncompressedPosition += chunkLength();
-            compressedPosition += offset;
-
-            if (uncompressedPosition <= uncompressedStart)
-                compressedStart = compressedPosition;
-            else
-                subOffsets.add(offset);
-
-            if (uncompressedPosition > uncompressedEnd) {
-                break;
-            }
-        }
-
-        return new CompressionMetadata(
-                parameters,
-                compressedDataLength,
-                decompressedDataLength,
-                compressedStart,
-                getDecompressedBoundaries(uncompressedStart).getLeft(),
-                subOffsets
-        );
-    }
-
-    public int size() {
-        return offsets.size();
-    }
-
-    public void writeObject(DataOutput stream) throws IOException {
-        CompressionParameters.serializer.serialize(parameters, stream, 1);
-
-        stream.writeInt(offsets.size());
-        for (int i: offsets) {
-            stream.writeInt(i);
-        }
-
-        stream.writeLong(compressedStart);
-        stream.writeLong(decompressedStart);
-        stream.writeLong(compressedDataLength);
-        stream.writeLong(decompressedDataLength);
-    }
-
-    public static CompressionMetadata readObject(DataInput stream) throws IOException {
-        CompressionParameters dParameters = CompressionParameters.serializer.deserialize(stream, 1);
-
-        int dCount = stream.readInt();
-        List<Integer> dOffsets = Lists.newArrayListWithExpectedSize(dCount);
-        for (int i = 0; i < dCount; i++)
-            dOffsets.add(stream.readInt());
-
-        long dCompressedStart = stream.readLong();
-        long dDecompressedStart = stream.readLong();
-        long dCompressedDataLength = stream.readLong();
-        long dDecompressedDataLength = stream.readLong();
-
-        return new CompressionMetadata(
-                dParameters, dCompressedDataLength, dDecompressedDataLength,
-                dCompressedStart, dDecompressedStart, dOffsets
-        );
     }
 
     private CompressionParameters readCompressionParameters(DataInput stream) throws IOException {
@@ -162,18 +104,24 @@ public class CompressionMetadata {
         }
     }
 
-    private List<Integer> readChunksOffsets(DataInput stream) throws IOException {
-        int chunkCount = stream.readInt();
-        List<Integer> extractedOffsets = Lists.newArrayListWithExpectedSize(chunkCount);
+    private List<Long> readChunksOffsets(FSDataInputStream stream, long start, long end) throws IOException {
+        if (end == 0)
+            return null;
 
-        long prev = stream.readLong();
-        long next;
-        for (long i = 0; i < (chunkCount - 1); i++) {
-            next = stream.readLong();
-            extractedOffsets.add((int) (next - prev));
-            prev = next;
+        long firstChunkOffset = stream.getPos();
+        long chunksToSkip = start / this.parameters.chunkLength();
+        long chunksToRead = (end / this.parameters.chunkLength() + 1) - chunksToSkip;
+
+        List<Long> extractedOffsets = Lists.newArrayListWithExpectedSize((int) chunksToRead);
+        stream.seek(firstChunkOffset + chunksToSkip * 8);
+        for (long i = 0; i <= chunksToRead; i++) {
+            try {
+                long next = stream.readLong();
+                extractedOffsets.add(next);
+            } catch (EOFException e) {
+                LOG.debug("Reached the end of file");
+            }
         }
-        extractedOffsets.add((int) (compressedDataLength - prev));
 
         return extractedOffsets;
     }

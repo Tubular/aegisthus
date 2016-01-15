@@ -17,23 +17,17 @@ import java.io.InputStream;
 
 public class AegCompressedSplit extends AegSplit {
     private static final Logger LOG = LoggerFactory.getLogger(AegCompressedSplit.class);
-    protected CompressionMetadata metadata;
+    protected long dataLength;  // Size of decompressed data in bytes
 
-    public static AegCompressedSplit createAegCompressedSplit(@Nonnull Path path,
-            long start,
-            long end,
-            @Nonnull String[] hosts,
-            CompressionMetadata metadata) {
+    public static AegCompressedSplit createAegCompressedSplit(@Nonnull Path path, long start, long end, long dataLength, @Nonnull String[] hosts) {
+        LOG.info("Split start: {}, end: {}, Total data size: {}", start, end, dataLength);
+
         AegCompressedSplit split = new AegCompressedSplit();
         split.path = path;
         split.start = start;
         split.end = end;
         split.hosts = hosts;
-        split.metadata = metadata.truncateTo(start, end);
-
-        LOG.info("start: {}, end: {}, orig length: {}, compressed length: {}",
-                start, end, metadata.size(), split.metadata.size());
-
+        split.dataLength = dataLength;
         return split;
     }
 
@@ -42,18 +36,21 @@ public class AegCompressedSplit extends AegSplit {
     public InputStream getInput(@Nonnull Configuration conf) throws IOException {
         FileSystem fs = path.getFileSystem(conf);
         FSDataInputStream dataIn = fs.open(path);
+        Path metadataPath = new Path(path.getParent(), path.getName().replaceAll("-Data.db", "-CompressionInfo.db"));
+        FSDataInputStream metadataIn = fs.open(metadataPath);
+        CompressionMetadata metadata = new CompressionMetadata(metadataIn, start, end, dataLength);
         return new CompressionInputStream(dataIn, metadata);
-    }
-
-    @Override
-    public void readFields(@Nonnull DataInput in) throws IOException {
-        super.readFields(in);
-        metadata = CompressionMetadata.readObject(in);
     }
 
     @Override
     public void write(@Nonnull DataOutput out) throws IOException {
         super.write(out);
-        metadata.writeObject(out);
+        out.writeLong(dataLength);
+    }
+
+    @Override
+    public void readFields(@Nonnull DataInput in) throws IOException {
+        super.readFields(in);
+        this.dataLength = in.readLong();
     }
 }

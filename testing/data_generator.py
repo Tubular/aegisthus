@@ -5,7 +5,7 @@ from cassandra.cluster import Cluster
 from datetime import datetime
 
 
-cluster = Cluster(['192.168.200.10'])
+cluster = Cluster(['127.0.0.1'])
 session = Session(cluster, keyspace='test')
 
 fields = ('bigint_field', 'boolean_field', 'float_field', 'int_field', 'list_int_field', 'set_text_field', 'map_time_field', 'map_long_field')
